@@ -14,14 +14,14 @@ from typing import Tuple
 import torch
 from timm.models.vision_transformer import Attention, Block, VisionTransformer
 
-from tome.merge import bipartite_soft_matching, merge_source, merge_wavg
-from tome.utils import parse_r
+from tor.merge import bipartite_soft_matching, merge_source, merge_wavg
+from tor.utils import parse_r
 
 
-class ToMeBlock(Block):
+class ToRBlock(Block):
     """
     Modifications:
-     - Apply ToMe between the attention and mlp blocks
+     - Apply tor between the attention and mlp blocks
      - Compute and propogate token size and potentially the token sources.
     """
 
@@ -33,30 +33,30 @@ class ToMeBlock(Block):
 
     def forward(self, x: torch.Tensor) -> torch.Tensor:
         # Note: this is copied from timm.models.vision_transformer.Block with modifications.
-        attn_size = self._tome_info["size"] if self._tome_info["prop_attn"] else None
+        attn_size = self._tor_info["size"] if self._tor_info["prop_attn"] else None
         x_attn, metric = self.attn(self.norm1(x), attn_size)
         x = x + self._drop_path1(x_attn)
 
-        r = self._tome_info["r"].pop(0)
+        r = self._tor_info["r"].pop(0)
         if r > 0:
-            # Apply ToMe here
+            # Apply tor here
             merge, _ = bipartite_soft_matching(
                 metric,
                 r,
-                self._tome_info["class_token"],
-                self._tome_info["distill_token"],
+                self._tor_info["class_token"],
+                self._tor_info["distill_token"],
             )
-            if self._tome_info["trace_source"]:
-                self._tome_info["source"] = merge_source(
-                    merge, x, self._tome_info["source"]
+            if self._tor_info["trace_source"]:
+                self._tor_info["source"] = merge_source(
+                    merge, x, self._tor_info["source"]
                 )
-            x, self._tome_info["size"] = merge_wavg(merge, x, self._tome_info["size"])
+            x, self._tor_info["size"] = merge_wavg(merge, x, self._tor_info["size"])
 
         x = x + self._drop_path2(self.mlp(self.norm2(x)))
         return x
 
 
-class ToMeAttention(Attention):
+class ToRAttention(Attention):
     """
     Modifications:
      - Apply proportional attention
@@ -96,40 +96,40 @@ class ToMeAttention(Attention):
         return x, k.mean(1)
 
 
-def make_tome_class(transformer_class):
-    class ToMeVisionTransformer(transformer_class):
+def make_tor_class(transformer_class):
+    class ToRVisionTransformer(transformer_class):
         """
         Modifications:
         - Initialize r, token size, and token sources.
         """
 
         def forward(self, *args, **kwdargs) -> torch.Tensor:
-            self._tome_info["r"] = parse_r(len(self.blocks), self.r)
-            self._tome_info["size"] = None
-            self._tome_info["source"] = None
+            self._tor_info["r"] = parse_r(len(self.blocks), self.r)
+            self._tor_info["size"] = None
+            self._tor_info["source"] = None
 
             return super().forward(*args, **kwdargs)
 
-    return ToMeVisionTransformer
+    return ToRVisionTransformer
 
 
 def apply_patch(
     model: VisionTransformer, trace_source: bool = False, prop_attn: bool = True
 ):
     """
-    Applies ToMe to this transformer. Afterward, set r using model.r.
+    Applies tor to this transformer. Afterward, set r using model.r.
 
     If you want to know the source of each token (e.g., for visualization), set trace_source = true.
-    The sources will be available at model._tome_info["source"] afterward.
+    The sources will be available at model._tor_info["source"] afterward.
 
     For proportional attention, set prop_attn to True. This is only necessary when evaluating models off
     the shelf. For trianing and for evaluating MAE models off the self set this to be False.
     """
-    ToMeVisionTransformer = make_tome_class(model.__class__)
+    ToRVisionTransformer = make_tor_class(model.__class__)
 
-    model.__class__ = ToMeVisionTransformer
+    model.__class__ = ToRVisionTransformer
     model.r = 0
-    model._tome_info = {
+    model._tor_info = {
         "r": model.r,
         "size": None,
         "source": None,
@@ -140,11 +140,11 @@ def apply_patch(
     }
 
     if hasattr(model, "dist_token") and model.dist_token is not None:
-        model._tome_info["distill_token"] = True
+        model._tor_info["distill_token"] = True
 
     for module in model.modules():
         if isinstance(module, Block):
-            module.__class__ = ToMeBlock
-            module._tome_info = model._tome_info
+            module.__class__ = ToRBlock
+            module._tor_info = model._tor_info
         elif isinstance(module, Attention):
-            module.__class__ = ToMeAttention
+            module.__class__ = ToRAttention

@@ -8,11 +8,11 @@
 from setuptools import find_packages, setup
 
 setup(
-    name="tome",
+    name="tor",
     version="0.1",
     author="Meta",
-    url="https://github.com/facebookresearch/tome",
-    description="Token Merging for Vision Transformers",
+    url="https://github.com/shivmgg/ToR.git",
+    description="Token Reduction for Vision Transformers",
     install_requires=[
         "torchvision",
         "numpy",
