@@ -103,3 +103,32 @@ def parse_r(num_layers: int, r: Union[List[int], Tuple[int, float], int]) -> Lis
     step = (max_val - min_val) / (num_layers - 1)
 
     return [int(min_val + step * i) for i in range(num_layers)]
+
+def parse_keep_rate(num_layers: int, keep_rate: int, drop_loc: List[int]) -> List[int]:
+    keep_rate_list = [1] * num_layers
+    for i in drop_loc:
+        keep_rate_list[i] = keep_rate
+    return keep_rate_list
+
+def complement_idx(idx, dim):
+    """
+    Compute the complement: set(range(dim)) - set(idx).
+    idx is a multi-dimensional tensor, find the complement for its trailing dimension,
+    all other dimension is considered batched.
+    Args:
+        idx: input index, shape: [N, *, K]
+        dim: the max index for complement
+    """
+    a = torch.arange(dim, device=idx.device)
+    ndim = idx.ndim
+    dims = idx.shape
+    n_idx = dims[-1]
+    dims = dims[:-1] + (-1, )
+    for i in range(1, ndim):
+        a = a.unsqueeze(0)
+    a = a.expand(*dims)
+    masked = torch.scatter(a, -1, idx, 0)
+    compl, _ = torch.sort(masked, dim=-1, descending=False)
+    compl = compl.permute(-1, *tuple(range(ndim - 1)))
+    compl = compl[n_idx:].permute(*(tuple(range(1, ndim)) + (0,)))
+    return compl
