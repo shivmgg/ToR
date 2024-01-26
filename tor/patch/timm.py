@@ -75,12 +75,12 @@ class ToRBlock(Block):
                 self._tor_info["class_token"],
                 self._tor_info["distill_token"],
             )
-            # print("merging:", merge.shape)
+            #print("merging:", merge.shape, x.shape)
             if self._tor_info["trace_source"]:
                 self._tor_info["source"] = merge_source(
                     merge, x, self._tor_info["source"]
                 )
-            x, _ = merge_wavg(merge, x, self._tor_info["size"])
+            x, self._tor_info["size"] = merge_wavg(merge, x, None)
             # print("after merging:", x.shape)
 
         x = x + self._drop_path2(self.mlp(self.norm2(x)))
@@ -117,7 +117,7 @@ class ToRAttention(Attention):
         )  # make torchscript happy (cannot use tensor as tuple)
 
         attn = (q @ k.transpose(-2, -1)) * self.scale
-
+        # print(size)
         # Apply proportional attention
         if size is not None:
             attn = attn + size.log()[:, None, None, :, 0]
