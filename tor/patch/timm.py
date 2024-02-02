@@ -34,6 +34,8 @@ class ToRBlock(Block):
     def forward(self, x: torch.Tensor, tokens=None, token_fusion=False, get_idx=False) -> torch.Tensor:
         # Note: this is copied from timm.models.vision_transformer.Block with modifications.
         keep_rate = self._tor_info["keep_rate"].pop(0)
+        merge_rate = self._tor_info["merge_rate"].pop(0)
+
         token_fusion = self._tor_info["token_fusion"]
         attn_size = self._tor_info["size"] if self._tor_info["prop_attn"] else None
         B, N, C = x.shape
@@ -47,7 +49,8 @@ class ToRBlock(Block):
 
             if token_fusion == True:
                 ##if token-fusion is enabled. 
-                remaining_tokens = math.ceil((1.0) * (N - left_tokens - 1))
+                remaining_tokens = math.ceil((merge_rate) * (N - left_tokens - 1))
+                # print(remaining_tokens)
                 compl = complement_idx(idx, N - 1)  # [B, N-1-left_tokens]
                 compl = compl[:, :remaining_tokens]
                 non_topk_x = torch.gather(non_cls, dim=1, index=compl.unsqueeze(-1).expand(-1, -1, C))  # [B, N-1-left_tokens, C]
@@ -166,6 +169,7 @@ def make_tor_class(transformer_class):
             self._tor_info["drop_loc"] = self.drop_loc
             self._tor_info["token_fusion"] = self.token_fusion
             self._tor_info["keep_rate"] = parse_keep_rate(len(self.blocks), self.keep_rate, self.drop_loc) 
+            self._tor_info["merge_rate"] = parse_keep_rate(len(self.blocks), self.merge_rate, self.drop_loc) 
             self._tor_info["size"] = None
             self._tor_info["source"] = None
 
@@ -191,6 +195,7 @@ def apply_patch(
     model.__class__ = ToRVisionTransformer
     model.r = 0
     model.keep_rate = 1.0
+    model.merge_rate = 1.0
     model.drop_loc = []
     model.token_fusion = True
     model._tor_info = {
@@ -198,6 +203,7 @@ def apply_patch(
         "size": None,
         "source": None,
         "keep_rate": model.keep_rate,
+        "merge_rate": model.merge_rate,
         "drop_loc": model.drop_loc,
         "token_fusion": model.token_fusion,
         "trace_source": trace_source,
