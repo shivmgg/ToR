@@ -9,7 +9,7 @@ import math
 from typing import Callable, Tuple
 
 import torch
-
+import numpy as np
 
 def do_nothing(x, mode=None):
     return x
@@ -47,22 +47,47 @@ def bipartite_soft_matching(
         return do_nothing, do_nothing
 
     with torch.no_grad():
-        metric = metric / metric.norm(dim=-1, keepdim=True)
-        a, b = metric[..., ::2, :], metric[..., 1::2, :]
-        scores = a @ b.transpose(-1, -2)
+        # metric = metric / metric.norm(dim=-1, keepdim=True)
+        metric = metric / metric.norm(dim=None)
 
+        a, b = metric[..., ::2, :], metric[..., 1::2, :] 
+        scores = a @ b.transpose(-1, -2)
+        B, H, W = scores.shape
+
+        # a, b, c = metric[..., ::3, :], metric[..., 1::3, :], metric[..., 2::3, :] 
+        # scores_ab = a @ b.transpose(-1, -2)
+
+        # scores_bc = b @ c.transpose(-1, -2)
+        # scores = torch.cat([scores_ab, scores_bc], dim=1)
+        # print(scores_ab.shape, scores.shape)
         if class_token:
             scores[..., 0, :] = -math.inf
         if distill_token:
             scores[..., :, 0] = -math.inf
 
-        node_max, node_idx = scores.max(dim=-1)
-        edge_idx = node_max.argsort(dim=-1, descending=True)[..., None]
+        # node_max, node_idx = scores.max(dim=-1)
+        # edge_idx = node_max.argsort(dim=-1, descending=True)[..., None]
+        # print(scores.shape)
+        scores_reshape = scores.reshape(scores.shape[0], -1)
+        node_gb_max, node_gb_idx = scores_reshape.topk(k=r, dim=-1, sorted=True) #
+        # print(node_gb_idx.shape, node_idx.shape)
+        node_gb_idx_og = torch.stack(torch.unravel_index(node_gb_idx, (node_gb_idx.shape[1], node_gb_idx.shape[1])), dim=-1).squeeze()
+        # print(node_gb_idx.shape, node_idx.shape, node_gb_idx_og.shape)
+        # print(node_gb_idx, node_gb_idx_og)
+        # print(H, W, r, node_gb_idx.shape, node_gb_idx_og.shape, node_idx.shape, edge_idx.shape)
+        # print(scores.shape, node_max.shape, node_idx.shape, )
 
-        unm_idx = edge_idx[..., r:, :]  # Unmerged Tokens
-        src_idx = edge_idx[..., :r, :]  # Merged Tokens
-        dst_idx = node_idx[..., None].gather(dim=-2, index=src_idx)
+        # unm_idx = edge_idx[..., r:, :]  # Unmerged Tokens
+        # src_idx = edge_idx[..., :r, :]  # Merged Tokens
+        # #print(node_gb_idx_og.shape, src_idx.shape)
+        # dst_idx = node_idx[..., None].gather(dim=-2, index=src_idx)
 
+        src_idx_og = node_gb_idx_og[:, :, 0, None]
+        dst_idx_og = node_gb_idx_og[:, :, 1, None]
+        # print(src_idx.shape, src_idx_og.shape)
+        # print(dst_idx.shape, dst_idx_og.shape)
+        # dst_idx = node_gb_idx_og
+        # print(src_idx, dst_idx)
         if class_token:
             # Sort to ensure the class token is at the start
             unm_idx = unm_idx.sort(dim=1)[0]
@@ -70,14 +95,16 @@ def bipartite_soft_matching(
     def merge(x: torch.Tensor, mode="mean") -> torch.Tensor:
         src, dst = x[..., ::2, :], x[..., 1::2, :]
         n, t1, c = src.shape
-        unm = src.gather(dim=-2, index=unm_idx.expand(n, t1 - r, c))
-        src = src.gather(dim=-2, index=src_idx.expand(n, r, c))
-        dst = dst.scatter_reduce(-2, dst_idx.expand(n, r, c), src, reduce=mode)
+        # print(src.shape, dst.shape, src_idx.shape)
+        # unm = src.gather(dim=-2, index=unm_idx.expand(n, t1 - r, c))
+        src = src.gather(dim=-2, index=src_idx_og.expand(n, r, c))
+        dst = dst.scatter_reduce(-2, dst_idx_og.expand(n, r, c), src, reduce=mode)
 
         if distill_token:
             return torch.cat([unm[:, :1], dst[:, :1], unm[:, 1:], dst[:, 1:]], dim=1)
         else:
-            return torch.cat([unm, dst], dim=1)
+            return torch.cat([dst], dim=1)
+            # return torch.cat([unm, dst], dim=1)
 
     def unmerge(x: torch.Tensor) -> torch.Tensor:
         unm_len = unm_idx.shape[1]
