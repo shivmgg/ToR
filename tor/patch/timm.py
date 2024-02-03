@@ -44,57 +44,49 @@ class ToRBlock(Block):
 
         if index is not None:
             # B, N, C = x.shape
-            non_cls = x[:, 1:]
-            x_others = torch.gather(non_cls, dim=1, index=index)  # [B, left_tokens, C]
+            # non_cls = x[:, 1:]
+            # x_others = torch.gather(non_cls, dim=1, index=index)  # [B, left_tokens, C]
 
-            if token_fusion == True:
-                ##if token-fusion is enabled. 
-                remaining_tokens = math.ceil((merge_rate) * (N - left_tokens - 1))
-                # print(remaining_tokens)
-                compl = complement_idx(idx, N - 1)  # [B, N-1-left_tokens]
-                compl = compl[:, :remaining_tokens]
-                non_topk_x = torch.gather(non_cls, dim=1, index=compl.unsqueeze(-1).expand(-1, -1, C))  # [B, N-1-left_tokens, C]
-                # non_topk_attn = torch.gather(cls_attn, dim=1, index=compl)  # [B, N-1-left_tokens]
-                # extra_token = torch.sum(non_topk * non_topk_attn.unsqueeze(-1), dim=1, keepdim=True)  # [B, 1, C]                
-                # x = torch.cat([x[:, 0:1], x_others, extra_token], dim=1)
+            # if token_fusion == True:
+            #     ##if token-fusion is enabled. 
+            #     remaining_tokens = math.ceil((merge_rate) * (N - left_tokens - 1))
+            #     # print(remaining_tokens)
+            #     compl = complement_idx(idx, N - 1)  # [B, N-1-left_tokens]
+            #     compl = compl[:, :remaining_tokens]
+            #     non_topk_x = torch.gather(non_cls, dim=1, index=compl.unsqueeze(-1).expand(-1, -1, C))  # [B, N-1-left_tokens, C]
+            #     # non_topk_attn = torch.gather(cls_attn, dim=1, index=compl)  # [B, N-1-left_tokens]
+            #     # extra_token = torch.sum(non_topk * non_topk_attn.unsqueeze(-1), dim=1, keepdim=True)  # [B, 1, C]                
+            #     # x = torch.cat([x[:, 0:1], x_others, extra_token], dim=1)
 
-                # remaining_tokens_index = idx.unsqueeze(-1).expand(-1, -1, metric.shape[-1])
-                # remaining_tokens_metric = torch.gather(metric, dim=1, index=remaining_tokens_index)  # [B, left_tokens, C // num_heads]                
-                pruned_tokens_metric = torch.gather(metric, dim=1, index=compl.unsqueeze(-1).expand(-1, -1, metric.shape[-1]))  # [B, N-1-left_tokens, C // num_heads]                   
-                # fused_token_metric = torch.mean(pruned_tokens_metric, dim=1, keepdim=True)  # [B, 1, C]
-                # metric = torch.cat([metric[:, 0:1], remaining_tokens_metric, fused_token_metric], dim=1)
+            #     # remaining_tokens_index = idx.unsqueeze(-1).expand(-1, -1, metric.shape[-1])
+            #     # remaining_tokens_metric = torch.gather(metric, dim=1, index=remaining_tokens_index)  # [B, left_tokens, C // num_heads]                
+            #     pruned_tokens_metric = torch.gather(metric, dim=1, index=compl.unsqueeze(-1).expand(-1, -1, metric.shape[-1]))  # [B, N-1-left_tokens, C // num_heads]                   
+            #     # fused_token_metric = torch.mean(pruned_tokens_metric, dim=1, keepdim=True)  # [B, 1, C]
+            #     # metric = torch.cat([metric[:, 0:1], remaining_tokens_metric, fused_token_metric], dim=1)
 
-            else:
-                #if token-fusion is disabled. 
-                x = torch.cat([x[:, 0:1], x_others], dim=1)
-                remaining_tokens_index = idx.unsqueeze(-1).expand(-1, -1, metric.shape[-1])
-                remaining_tokens_metric = torch.gather(metric, dim=1, index=remaining_tokens_index)  # [B, left_tokens, C // num_heads]
-                metric = torch.cat([metric[:, 0:1], remaining_tokens_metric], dim=1)
+            # else:
+            #     #if token-fusion is disabled. 
+            #     x = torch.cat([x[:, 0:1], x_others], dim=1)
+            #     remaining_tokens_index = idx.unsqueeze(-1).expand(-1, -1, metric.shape[-1])
+            #     remaining_tokens_metric = torch.gather(metric, dim=1, index=remaining_tokens_index)  # [B, left_tokens, C // num_heads]
+            #     metric = torch.cat([metric[:, 0:1], remaining_tokens_metric], dim=1)
 
-            r = self._tor_info["r"].pop(0)
-            if r > 0:
-                # Apply tor here
-                merge, _ = bipartite_soft_matching(
-                    pruned_tokens_metric,
-                    r,
-                    class_token = False,
-                    distill_token = False,
-                )
-                #print("merging:", merge.shape, x.shape)
-                if self._tor_info["trace_source"]:
-                    self._tor_info["source"] = merge_source(
-                        merge, non_topk_x, self._tor_info["source"]
+                r = self._tor_info["r"].pop(0)
+                if r > 0:
+                    # Apply ToMe here
+                    merge, _ = bipartite_soft_matching(
+                        metric,
+                        r,
+                        self._tor_info["class_token"],
+                        self._tor_info["distill_token"],
                     )
-                non_topk_x, self._tor_info["size"] = merge_wavg(merge, non_topk_x, None)
-                x = torch.cat([x[:, 0:1], x_others, non_topk_x], dim=1)
-                self._tor_info["size"] = torch.ones_like(x[..., 0, None])
-
+                    x, self._tor_info["size"] = merge_wavg(merge, x, self._tor_info["size"])
             # print("after merging:", x.shape)
 
         x = x + self._drop_path2(self.mlp(self.norm2(x)))
-        n_tokens = x.shape[1] - 1
-        if get_idx and index is not None:
-            return x, n_tokens, idx
+        # n_tokens = x.shape[1] - 1
+        # if get_idx and index is not None:
+        #     return x, n_tokens, idx
         
         return x
 
@@ -137,24 +129,24 @@ class ToRAttention(Attention):
         x = self.proj(x)
         x = self.proj_drop(x)
 
-        left_tokens = N - 1
+        # left_tokens = N - 1
         if keep_rate < 1 or tokens is not None:  # double check the keep rate
-            left_tokens = math.ceil(keep_rate * (N - 1))
-            if tokens is not None:
-                left_tokens = tokens
-            if left_tokens == N - 1:
-                return x, k.mean(1), None, None, None, left_tokens
-            assert left_tokens >= 1
-            cls_attn = attn[:, :, 0, 1:]  # [B, H, N-1]
-            cls_attn = cls_attn.mean(dim=1)  # [B, N-1]
-            _, idx = torch.topk(cls_attn, left_tokens, dim=1, largest=True, sorted=True)  # [B, left_tokens]
-            # cls_idx = torch.zeros(B, 1, dtype=idx.dtype, device=idx.device)
-            # index = torch.cat([cls_idx, idx + 1], dim=1)
-            index = idx.unsqueeze(-1).expand(-1, -1, C)  # [B, left_tokens, C]
-            return x, k.mean(1), index, idx, cls_attn, left_tokens
+        #     left_tokens = math.ceil(keep_rate * (N - 1))
+        #     if tokens is not None:
+        #         left_tokens = tokens
+        #     if left_tokens == N - 1:
+        #         return x, k.mean(1), None, None, None, left_tokens
+        #     assert left_tokens >= 1
+        #     cls_attn = attn[:, :, 0, 1:]  # [B, H, N-1]
+        #     cls_attn = cls_attn.mean(dim=1)  # [B, N-1]
+        #     _, idx = torch.topk(cls_attn, left_tokens, dim=1, largest=True, sorted=True)  # [B, left_tokens]
+        #     # cls_idx = torch.zeros(B, 1, dtype=idx.dtype, device=idx.device)
+        #     # index = torch.cat([cls_idx, idx + 1], dim=1)
+        #     index = idx.unsqueeze(-1).expand(-1, -1, C)  # [B, left_tokens, C]
+            return x, k.mean(1), 1, None, None, None #idx, cls_attn, left_tokens
         
         # Return k as well here
-        return x, k.mean(1), None, None, None, left_tokens
+        return x, k.mean(1), None, None, None, None
 
 
 def make_tor_class(transformer_class):

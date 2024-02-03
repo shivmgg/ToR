@@ -12,12 +12,12 @@ import tor
 from torchvision.transforms.functional import InterpolationMode
 from PIL import Image
 import json
-import tlt.models
+# import tlt.models
 
 cuda_id = 0
 import csv
 def main():
-    valdir = os.path.join('/home/shivam/datasets/imagenet/val/')
+    valdir = os.path.join('/home/datasets/imagenet/imagenet/val/')
     normalize = transforms.Normalize(mean=[0.485, 0.456, 0.406],
                                         std=[0.229, 0.224, 0.225])
 
@@ -39,7 +39,7 @@ def main():
     # DEiT B 16: deit_base_patch16_224
     # DEiT S 16: deit_small_patch16_224
     # deit_small_patch16_shrink_base
-    model_name = "deit_base_patch16_224"
+    model_name = "deit_small_patch16_224"
 
     # Load a pretrained model
     # model = timm.create_model(model_name, pretrained=True).cuda()
@@ -86,8 +86,8 @@ def main():
     runs = 50
     batch_size = 256  # Lower this if you don't have that much memory
 
-    for r_in in range(1, 22):  
-        for kr in range(1, 20):
+    for r_in in range(80, 100):  
+        for kr in range(9, 0, -1):
             # Load a pretrained model
             model = timm.create_model(model_name, pretrained=True).cuda()  
             # ckpt = torch.load('lvvit_s-26M-224-83.3.pth.tar')
@@ -100,10 +100,11 @@ def main():
             tor.patch.timm(model)
 
             model.r = r_in
-            model.keep_rate = 0.05 * kr
+            model.keep_rate = 0 #0.1 * kr
             model.drop_loc=[3, 6, 9]
             model.token_fusion = True
-            print("r value:", r_in, "keep rate:", 0.05*kr)
+            model.merge_rate = 0 #0.1
+            print("r value:", r_in, "keep rate:", 0.1*kr)
 
             # evalute model accuracy
             top1, top5 = validate(model, val_loader)
@@ -119,7 +120,7 @@ def main():
                 input_size=input_size
             )
             results = [
-                r_in, 0.05*kr,
+                r_in, 0.1*kr,
                 round(top1.item(), 2),
                 round(tome_throughput, 2)]
             
